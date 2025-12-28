@@ -1,33 +1,14 @@
 import pathway as pw
 
+from policy_ingest import SignalSchema
+from policy_classifier import detect_policy_domain
+from impact_agent import impact_score
+from stakeholder_agent import resolve_stakeholders
+from format_agent import format_output
 
-class SignalSchema(pw.Schema):
-    signal: str
-
-
-@pw.udf
-def detect_policy_domain(signal: str) -> str:
-    s = signal.lower()
-    if "inflation" in s or "interest" in s:
-        return "finance"
-    if "food" in s or "fertilizer" in s:
-        return "agriculture"
-    if "fuel" in s or "energy" in s:
-        return "energy"
-    return "general"
-
-
-@pw.udf
-def impact_score(signal: str) -> int:
-    scores = {
-        "inflation_up": 8,
-        "fuel_subsidy_increase": 5,
-        "food_price_spike": 9,
-    }
-    return scores.get(signal, 3)
 
 def main():
-    signals, writer = pw.io.http.rest_connector(
+    signals, _ = pw.io.http.rest_connector(
         host="0.0.0.0",
         port=8001,
         schema=SignalSchema,
@@ -37,20 +18,22 @@ def main():
         signal=pw.this.signal,
         domain=detect_policy_domain(pw.this.signal),
         impact=impact_score(pw.this.signal),
+        stakeholders=resolve_stakeholders(
+            detect_policy_domain(pw.this.signal)
+        ),
     )
 
-    response = enriched.select(
-        result=
-            pw.this.signal
-            + " | domain="
-            + pw.this.domain
-            + " | impact="
-            + pw.apply(str, pw.this.impact)
+    final = enriched.select(
+        output=format_output(
+            pw.this.signal,
+            pw.this.domain,
+            pw.this.impact,
+            pw.this.stakeholders,
+        )
     )
 
-    writer(response)
+    pw.debug.compute_and_print(final)
     pw.run()
-
 
 
 if __name__ == "__main__":
